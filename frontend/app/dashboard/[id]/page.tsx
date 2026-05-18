@@ -83,6 +83,7 @@ export default function EngagementDetailPage() {
   async function runAnalysis() {
     setStreaming(true);
     setStreamLog([]);
+    setError("");
     const newBrief: Brief = { executive_summary: "", sections: [], strategic_recommendations: "" };
 
     try {
@@ -119,18 +120,26 @@ export default function EngagementDetailPage() {
   }
 
   async function downloadPDF() {
-    const token = localStorage.getItem("token");
-    const res = await fetch(`${API_URL}/report/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return;
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${engagement?.company}_Strategy_Brief.pdf`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_URL}/report/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(body.detail || `PDF export failed (${res.status})`);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${engagement?.company}_Strategy_Brief.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "PDF download failed");
+    }
   }
 
   if (loading) {

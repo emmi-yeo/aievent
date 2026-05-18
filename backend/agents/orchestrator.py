@@ -35,16 +35,19 @@ async def run_analysis(engagement_id: str):
     company = eng.get("company", "")
     industry = eng.get("industry", "")
 
-    final_brief = None
     async for chunk in generate_analysed_summary(
         engagement_id, onboarding_answers, company, industry
     ):
         data = json.loads(chunk.strip())
         if data.get("event") == "done":
+            # Save BEFORE yielding "done" — client may disconnect immediately
+            # on receipt of this event, which would cancel any code after yield.
             final_brief = data.get("brief")
+            if final_brief:
+                try:
+                    brief_json = json.dumps(final_brief)
+                    update_engagement_field(engagement_id, "brief_json", brief_json)
+                    update_engagement_field(engagement_id, "status", "complete")
+                except Exception as e:
+                    print(f"ERROR: Failed to save brief to Sheets: {e}")
         yield chunk
-
-    if final_brief:
-        brief_json = json.dumps(final_brief)
-        update_engagement_field(engagement_id, "brief_json", brief_json)
-        update_engagement_field(engagement_id, "status", "complete")

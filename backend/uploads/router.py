@@ -1,3 +1,4 @@
+import logging
 import mimetypes
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 
@@ -6,18 +7,13 @@ from gcloud.sheets import (
     create_upload_record, get_uploads_by_engagement,
     update_upload_status, get_engagement_by_id,
 )
+from gcloud.chroma import get_collection, embed_texts
 from uploads.processor import extract_text, chunk_text
 from auth.utils import require_client, get_current_user
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/uploads", tags=["uploads"])
-
-
-def _get_vector_store(engagement_id: str):
-    import chromadb
-    import os
-    persist_dir = os.path.join("chroma_db", engagement_id)
-    client = chromadb.PersistentClient(path=persist_dir)
-    return client.get_or_create_collection(name=f"eng_{engagement_id}")
 
 
 @router.post("/{engagement_id}", response_model=UploadOut, status_code=201)
@@ -57,14 +53,17 @@ async def upload_document(
         text = extract_text(file_bytes, filename)
         chunks = chunk_text(text)
         if chunks:
-            collection = _get_vector_store(engagement_id)
+            collection = get_collection(engagement_id)
             ids = [f"{record['id']}_{i}" for i in range(len(chunks))]
             metadatas = [{"category": category, "filename": filename,
                           "upload_id": record["id"]} for _ in chunks]
-            collection.add(documents=chunks, ids=ids, metadatas=metadatas)
+            embeddings = embed_texts(chunks)
+            collection.add(documents=chunks, embeddings=embeddings,
+                           ids=ids, metadatas=metadatas)
         update_upload_status(record["id"], "ready")
         record["status"] = "ready"
     except Exception as e:
+        logger.error("Upload processing failed for %s (%s): %s", filename, category, e, exc_info=True)
         update_upload_status(record["id"], "error")
         record["status"] = "error"
 

@@ -2,10 +2,14 @@
 RAG synthesis using ChromaDB + Gemini to produce the Analysed Summary.
 Each section is generated with focused context from the relevant document category.
 """
+import asyncio
+import json
 import os
+import re
 from typing import List, Dict, AsyncGenerator
 
 import google.generativeai as genai
+from google.api_core.exceptions import ResourceExhausted
 
 from models.schemas import DOCUMENT_CATEGORIES, CATEGORY_LABELS
 
@@ -21,18 +25,20 @@ SECTION_MAP = {
 
 
 def _get_collection(engagement_id: str):
-    import chromadb
-    persist_dir = os.path.join("chroma_db", engagement_id)
-    client = chromadb.PersistentClient(path=persist_dir)
-    return client.get_or_create_collection(name=f"eng_{engagement_id}")
+    from gcloud.chroma import get_collection
+    return get_collection(engagement_id)
 
 
 def _query_category(collection, category: str, query: str, n: int = 6) -> List[str]:
     """Retrieve top-n chunks for a specific category."""
     try:
+        from gcloud.chroma import embed_query
+        count = collection.count()
+        if count == 0:
+            return []
         results = collection.query(
-            query_texts=[query],
-            n_results=min(n, collection.count()),
+            query_embeddings=[embed_query(query)],
+            n_results=min(n, count),
             where={"category": category},
         )
         return results["documents"][0] if results["documents"] else []
@@ -43,9 +49,13 @@ def _query_category(collection, category: str, query: str, n: int = 6) -> List[s
 def _query_all(collection, query: str, n: int = 10) -> List[str]:
     """Retrieve top-n chunks across all categories."""
     try:
+        from gcloud.chroma import embed_query
+        count = collection.count()
+        if count == 0:
+            return []
         results = collection.query(
-            query_texts=[query],
-            n_results=min(n, collection.count()),
+            query_embeddings=[embed_query(query)],
+            n_results=min(n, count),
         )
         return results["documents"][0] if results["documents"] else []
     except Exception:
@@ -54,6 +64,27 @@ def _query_all(collection, query: str, n: int = 10) -> List[str]:
 
 def _build_context(chunks: List[str]) -> str:
     return "\n\n---\n\n".join(chunks) if chunks else "No documents available for this section."
+
+
+def _parse_retry_delay(exc: ResourceExhausted) -> int:
+    """Extract the suggested retry delay from a 429 error message, default 30s."""
+    match = re.search(r"retry[^\d]*(\d+)", str(exc), re.IGNORECASE)
+    return int(match.group(1)) + 2 if match else 30
+
+
+async def _generate_with_retry(model, prompt: str, max_retries: int = 5) -> str:
+    """Call model.generate_content with automatic retry on 429 rate-limit errors."""
+    for attempt in range(max_retries):
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: model.generate_content(prompt))
+            return response.text.strip()
+        except ResourceExhausted as exc:
+            if attempt == max_retries - 1:
+                raise
+            wait = _parse_retry_delay(exc)
+            await asyncio.sleep(wait)
+    raise RuntimeError("Unreachable")
 
 
 async def generate_analysed_summary(
@@ -88,8 +119,6 @@ async def generate_analysed_summary(
         "strategic_recommendations": "",
     }
 
-    import json
-
     # Generate each section
     for category, (title, instruction) in SECTION_MAP.items():
         chunks = _query_category(collection, category, instruction)
@@ -113,8 +142,7 @@ Use professional language suitable for a C-suite strategy meeting.
 Focus on insights the consultant can act on.
 Do not repeat the company name in every sentence."""
 
-        response = model.generate_content(prompt)
-        section_content = response.text.strip()
+        section_content = await _generate_with_retry(model, prompt)
 
         section = {
             "key": category,
@@ -151,8 +179,7 @@ The executive summary should cover:
 
 Write in a direct, consultant-ready style. No fluff."""
 
-    exec_response = model.generate_content(exec_prompt)
-    exec_summary = exec_response.text.strip()
+    exec_summary = await _generate_with_retry(model, exec_prompt)
     brief["executive_summary"] = exec_summary
 
     yield json.dumps({"event": "section", "key": "executive_summary",
@@ -178,8 +205,7 @@ Each recommendation should be:
 
 Focus on growth, risk mitigation, and competitive positioning."""
 
-    rec_response = model.generate_content(rec_prompt)
-    recommendations = rec_response.text.strip()
+    recommendations = await _generate_with_retry(model, rec_prompt)
     brief["strategic_recommendations"] = recommendations
 
     yield json.dumps({"event": "section", "key": "strategic_recommendations",

@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Environment variables & secrets — NEVER commit these
+backend/.env
+backend/service-account.json
+backend/oauth-client.json
+backend/authorize_drive.py
+backend/generate_samples.py
+backend/test_docs/
+
+# ChromaDB local data
+backend/chroma_db/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# macOS
+.DS_Store
+
+# IDEs
+.idea/
+.vscode/
+*.swp

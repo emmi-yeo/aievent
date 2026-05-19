@@ -33,11 +33,9 @@ def extract_text(file_bytes: bytes, filename: str) -> str:
 
 
 def _extract_pdf(file_bytes: bytes) -> str:
-    import fitz  # PyMuPDF
-    doc = fitz.open(stream=file_bytes, filetype="pdf")
-    pages = []
-    for page in doc:
-        pages.append(page.get_text())
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(file_bytes))
+    pages = [page.extract_text() or "" for page in reader.pages]
     return "\n".join(pages)
 
 

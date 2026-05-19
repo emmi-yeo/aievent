@@ -14,7 +14,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     BaseDocTemplate, Frame, PageTemplate, Paragraph,
-    Spacer, HRFlowable, PageBreak, KeepTogether, Table, TableStyle,
+    Spacer, HRFlowable, PageBreak, KeepTogether, NextPageTemplate,
 )
 
 # ── Brand colours ─────────────────────────────────────────────────────────────
@@ -87,7 +87,11 @@ def _cover_background(canvas, doc):
 
 def _page_footer(canvas, doc):
     canvas.saveState()
-    w, _ = A4
+    w, h = A4
+    # Ensure content pages are always white
+    canvas.setFillColor(WHITE)
+    canvas.rect(0, 0, w, h, fill=1, stroke=0)
+    # Footer rule + page number
     canvas.setFillColor(colors.HexColor("#e2e8f0"))
     canvas.rect(0, 1 * cm, w, 0.05 * cm, fill=1, stroke=0)
     canvas.setFont("Helvetica", 8)
@@ -178,6 +182,7 @@ def generate_pdf(brief: Dict) -> bytes:
     story.append(Paragraph(
         "Prepared by AI Market Research Tool — For Consultant Use Only",
         styles["CoverMeta"]))
+    story.append(NextPageTemplate("Content"))
     story.append(PageBreak())
 
     # ── Executive Summary ────────────────────────────────────────────────────

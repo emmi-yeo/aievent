@@ -1,17 +1,18 @@
 """
-RAG synthesis using ChromaDB + Gemini to produce the Analysed Summary.
+RAG synthesis using ChromaDB + Groq to produce the Analysed Summary.
+Groq is used for fast text generation; Gemini handles embeddings only.
 Each section is generated with focused context from the relevant document category.
 """
 import asyncio
 import json
 import os
-import re
 from typing import List, Dict, AsyncGenerator
 
-import google.generativeai as genai
-from google.api_core.exceptions import ResourceExhausted
+from groq import Groq, RateLimitError
 
-from models.schemas import DOCUMENT_CATEGORIES, CATEGORY_LABELS
+from models.schemas import CATEGORY_LABELS
+
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 SECTION_MAP = {
     "financial_report":    ("Financial Health",    "Analyse the company's financial health, key metrics, revenue trends, profitability, and financial risks."),
@@ -66,23 +67,29 @@ def _build_context(chunks: List[str]) -> str:
     return "\n\n---\n\n".join(chunks) if chunks else "No documents available for this section."
 
 
-def _parse_retry_delay(exc: ResourceExhausted) -> int:
-    """Extract the suggested retry delay from a 429 error message, default 30s."""
-    match = re.search(r"retry[^\d]*(\d+)", str(exc), re.IGNORECASE)
-    return int(match.group(1)) + 2 if match else 30
-
-
-async def _generate_with_retry(model, prompt: str, max_retries: int = 5) -> str:
-    """Call model.generate_content with automatic retry on 429 rate-limit errors."""
+async def _generate(client: Groq, prompt: str, max_retries: int = 4) -> str:
+    """Call Groq chat completions with automatic retry on rate-limit errors."""
     for attempt in range(max_retries):
         try:
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: model.generate_content(prompt))
-            return response.text.strip()
-        except ResourceExhausted as exc:
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.4,
+                ),
+            )
+            return response.choices[0].message.content.strip()
+        except RateLimitError as exc:
             if attempt == max_retries - 1:
                 raise
-            wait = _parse_retry_delay(exc)
+            # Groq includes retry-after in headers; fall back to 15s
+            wait = 15
+            import re
+            match = re.search(r"try again in ([\d.]+)s", str(exc), re.IGNORECASE)
+            if match:
+                wait = int(float(match.group(1))) + 1
             await asyncio.sleep(wait)
     raise RuntimeError("Unreachable")
 
@@ -98,12 +105,9 @@ async def generate_analysed_summary(
     Each event: {"event": "section", "title": "...", "content": "...", "key": "..."}
     Final event: {"event": "done", "brief": {...}}
     """
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    model = genai.GenerativeModel("gemini-2.5-flash")
-
+    client = Groq(api_key=os.environ["GROQ_API_KEY"])
     collection = _get_collection(engagement_id)
 
-    # Build onboarding context string
     onboarding_context = "\n".join(
         f"Q: {a['question']}\nA: {a['answer']}"
         for a in onboarding_answers
@@ -142,7 +146,7 @@ Use professional language suitable for a C-suite strategy meeting.
 Focus on insights the consultant can act on.
 Do not repeat the company name in every sentence."""
 
-        section_content = await _generate_with_retry(model, prompt)
+        section_content = await _generate(client, prompt)
 
         section = {
             "key": category,
@@ -179,7 +183,7 @@ The executive summary should cover:
 
 Write in a direct, consultant-ready style. No fluff."""
 
-    exec_summary = await _generate_with_retry(model, exec_prompt)
+    exec_summary = await _generate(client, exec_prompt)
     brief["executive_summary"] = exec_summary
 
     yield json.dumps({"event": "section", "key": "executive_summary",
@@ -205,7 +209,7 @@ Each recommendation should be:
 
 Focus on growth, risk mitigation, and competitive positioning."""
 
-    recommendations = await _generate_with_retry(model, rec_prompt)
+    recommendations = await _generate(client, rec_prompt)
     brief["strategic_recommendations"] = recommendations
 
     yield json.dumps({"event": "section", "key": "strategic_recommendations",

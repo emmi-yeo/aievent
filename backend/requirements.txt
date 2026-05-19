@@ -20,14 +20,17 @@ openpyxl==3.1.2
 pytesseract==0.3.10
 Pillow==10.3.0
 
-# Vector store & RAG (no LangChain — use Gemini + ChromaDB directly)
-chromadb==0.5.0
+# Vector store & RAG
+chromadb==1.5.9
+
+# AI — fast text generation
+groq==1.0.0
 
 # Email
 resend==0.8.0
 
-# PDF generation
-weasyprint==62.3
+# PDF generation (pure Python — no system dependencies)
+reportlab==4.5.1
 
 # Scheduling
 apscheduler==3.10.4

@@ -1,122 +1,205 @@
 """
 PDF report generation from an Analysed Summary brief JSON.
-Uses WeasyPrint to render an HTML template to PDF.
+Uses ReportLab (pure Python, no system dependencies).
 """
-import json
+import io
+import re
 from datetime import datetime
 from typing import Dict
 
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import (
+    BaseDocTemplate, Frame, PageTemplate, Paragraph,
+    Spacer, HRFlowable, PageBreak, KeepTogether,
+)
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<style>
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: 'Georgia', serif; font-size: 11pt; color: #1a1a2e; line-height: 1.6; }}
-  .cover {{ page-break-after: always; display: flex; flex-direction: column;
-            justify-content: center; min-height: 100vh; padding: 80px 60px;
-            background: #0f3460; color: white; }}
-  .cover h1 {{ font-size: 32pt; font-weight: bold; margin-bottom: 12px; }}
-  .cover .subtitle {{ font-size: 14pt; color: #a8dadc; margin-bottom: 40px; }}
-  .cover .meta {{ font-size: 10pt; color: #ccc; }}
-  .cover .label {{ font-size: 9pt; text-transform: uppercase;
-                   letter-spacing: 2px; color: #a8dadc; margin-bottom: 4px; }}
-  .section {{ padding: 40px 60px; page-break-inside: avoid; }}
-  .section + .section {{ border-top: 1px solid #e0e0e0; }}
-  h2 {{ font-size: 16pt; color: #0f3460; margin-bottom: 16px;
-        padding-bottom: 8px; border-bottom: 2px solid #e94560; }}
-  h3 {{ font-size: 12pt; color: #16213e; margin: 16px 0 8px; }}
-  p {{ margin-bottom: 10px; text-align: justify; }}
-  .exec-summary {{ background: #f0f4ff; padding: 40px 60px; }}
-  .exec-summary h2 {{ color: #0f3460; }}
-  .recommendations ol {{ padding-left: 20px; }}
-  .recommendations li {{ margin-bottom: 12px; }}
-  .source-tag {{ display: inline-block; background: #e8f4f8; color: #0f3460;
-                  font-size: 8pt; padding: 2px 8px; border-radius: 12px;
-                  margin-bottom: 12px; }}
-  .footer {{ text-align: center; font-size: 8pt; color: #999;
-             padding: 20px; border-top: 1px solid #eee; }}
-</style>
-</head>
-<body>
-
-<div class="cover">
-  <div class="label">Confidential — Strategy Brief</div>
-  <h1>{company}</h1>
-  <div class="subtitle">Analysed Summary Report</div>
-  <div class="meta">
-    <div><strong>Industry:</strong> {industry}</div>
-    <div><strong>Generated:</strong> {date}</div>
-    <div style="margin-top:8px; font-style:italic; color:#ccc; font-size:9pt;">
-      Prepared by AI Market Research Tool — For Consultant Use Only
-    </div>
-  </div>
-</div>
-
-<div class="exec-summary">
-  <h2>Executive Summary</h2>
-  {executive_summary_html}
-</div>
-
-{sections_html}
-
-<div class="section recommendations">
-  <h2>Strategic Recommendations</h2>
-  {recommendations_html}
-</div>
-
-<div class="footer">
-  Confidential — {company} Strategy Brief — Generated {date}
-</div>
-
-</body>
-</html>
-"""
+# ── Brand colours ─────────────────────────────────────────────────────────────
+NAVY   = colors.HexColor("#0f3460")
+RED    = colors.HexColor("#e94560")
+LIGHT  = colors.HexColor("#f0f4ff")
+GREY   = colors.HexColor("#6b7280")
+WHITE  = colors.white
+BLACK  = colors.HexColor("#1a1a2e")
 
 
-def _text_to_html(text: str) -> str:
-    """Convert plain text with newlines to HTML paragraphs."""
-    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
-    return "".join(f"<p>{p}</p>" for p in paragraphs)
+def _styles():
+    base = getSampleStyleSheet()
+
+    def add(name, **kw):
+        base.add(ParagraphStyle(name=name, **kw))
+
+    add("CoverTitle",   fontSize=28, textColor=WHITE,  fontName="Helvetica-Bold",
+        spaceAfter=8,  leading=34)
+    add("CoverSub",     fontSize=13, textColor=colors.HexColor("#a8dadc"),
+        fontName="Helvetica", spaceAfter=30, leading=18)
+    add("CoverMeta",    fontSize=9,  textColor=colors.HexColor("#cccccc"),
+        fontName="Helvetica", spaceAfter=4,  leading=13)
+    add("CoverLabel",   fontSize=8,  textColor=colors.HexColor("#a8dadc"),
+        fontName="Helvetica-Bold", spaceAfter=2, leading=11,
+        wordWrap="CJK")
+
+    add("SectionHead",  fontSize=14, textColor=NAVY, fontName="Helvetica-Bold",
+        spaceBefore=6, spaceAfter=8, leading=18)
+    add("ExecHead",     fontSize=14, textColor=WHITE, fontName="Helvetica-Bold",
+        spaceBefore=4, spaceAfter=8, leading=18)
+    add("SubHead",      fontSize=11, textColor=BLACK, fontName="Helvetica-Bold",
+        spaceBefore=8, spaceAfter=4, leading=14)
+    add("Body",         fontSize=10, textColor=BLACK, fontName="Helvetica",
+        spaceAfter=6,  leading=15, alignment=TA_JUSTIFY)
+    add("ExecBody",     fontSize=10, textColor=colors.HexColor("#e5e7eb"),
+        fontName="Helvetica", spaceAfter=6, leading=15, alignment=TA_JUSTIFY)
+    add("BulletItem",   fontSize=10, textColor=BLACK, fontName="Helvetica",
+        spaceAfter=6,  leading=15, leftIndent=16, bulletIndent=4)
+    add("Tag",          fontSize=8,  textColor=NAVY,  fontName="Helvetica",
+        spaceAfter=6,  leading=10,
+        backColor=colors.HexColor("#e8f4f8"),
+        borderPadding=(2, 6, 2, 6), borderRadius=8)
+    add("Footer",       fontSize=7,  textColor=GREY,  fontName="Helvetica",
+        alignment=TA_CENTER, leading=10)
+
+    return base
+
+
+def _cover_background(canvas, doc):
+    """Draw the dark-navy cover page background."""
+    canvas.saveState()
+    w, h = A4
+    canvas.setFillColor(NAVY)
+    canvas.rect(0, 0, w, h, fill=1, stroke=0)
+    canvas.restoreState()
+
+
+def _page_footer(canvas, doc):
+    """Draw page number footer on non-cover pages."""
+    canvas.saveState()
+    w, _ = A4
+    canvas.setFont("Helvetica", 7)
+    canvas.setFillColor(GREY)
+    canvas.drawCentredString(w / 2, 1.2 * cm,
+                             f"Confidential — Page {doc.page}")
+    canvas.restoreState()
+
+
+def _render_text(text: str, styles, body_style="Body", exec_mode=False) -> list:
+    """Convert plain/markdown text into ReportLab flowables."""
+    flowables = []
+    body_st  = styles[body_style]
+    sub_st   = styles["SubHead"]
+    bullet_st = styles["BulletItem"]
+
+    lines = [ln for ln in text.split("\n") if ln.strip()]
+    for line in lines:
+        stripped = line.strip()
+
+        # Bold heading: **text** or ## heading
+        if re.match(r"^\*\*.+\*\*$", stripped) or re.match(r"^#{1,3}\s", stripped):
+            clean = re.sub(r"^#+\s*", "", stripped).replace("**", "")
+            flowables.append(Paragraph(clean, sub_st))
+
+        # Numbered list
+        elif re.match(r"^\d+\.\s", stripped):
+            clean = re.sub(r"^\d+\.\s*", "", stripped)
+            # Bold the first part if **...**
+            clean = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", clean)
+            num   = re.match(r"^(\d+)", stripped).group(1)
+            flowables.append(Paragraph(
+                f"<b>{num}.</b> {clean}", bullet_st))
+
+        # Bullet
+        elif stripped.startswith("- ") or stripped.startswith("• "):
+            clean = stripped.lstrip("-•").strip()
+            clean = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", clean)
+            flowables.append(Paragraph(f"• {clean}", bullet_st))
+
+        else:
+            clean = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", stripped)
+            flowables.append(Paragraph(clean, body_st))
+
+    return flowables
 
 
 def generate_pdf(brief: Dict) -> bytes:
     """Render the brief dict to a PDF and return bytes."""
-    from weasyprint import HTML
+    buf    = io.BytesIO()
+    styles = _styles()
+    w, h   = A4
 
-    company = brief.get("company", "Company")
-    industry = brief.get("industry", "")
-    date = datetime.utcnow().strftime("%B %d, %Y")
+    # ── Document with two page templates ─────────────────────────────────────
+    margin = 2 * cm
+    cover_frame  = Frame(margin, margin, w - 2*margin, h - 2*margin,
+                         id="cover",  showBoundary=0)
+    content_frame = Frame(margin, 1.8*cm, w - 2*margin, h - margin - 1.8*cm,
+                          id="content", showBoundary=0)
 
-    exec_html = _text_to_html(brief.get("executive_summary", ""))
-
-    sections_html_parts = []
-    for section in brief.get("sections", []):
-        source_tag = ""
-        if section.get("sources"):
-            source_tag = f'<div class="source-tag">Source: {", ".join(section["sources"])}</div>'
-        section_html = f"""
-        <div class="section">
-          <h2>{section['title']}</h2>
-          {source_tag}
-          {_text_to_html(section['content'])}
-        </div>
-        """
-        sections_html_parts.append(section_html)
-
-    sections_html = "\n".join(sections_html_parts)
-    rec_html = _text_to_html(brief.get("strategic_recommendations", ""))
-
-    html_content = HTML_TEMPLATE.format(
-        company=company,
-        industry=industry,
-        date=date,
-        executive_summary_html=exec_html,
-        sections_html=sections_html,
-        recommendations_html=rec_html,
+    doc = BaseDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=margin, rightMargin=margin,
+        topMargin=margin, bottomMargin=1.8*cm,
     )
+    doc.addPageTemplates([
+        PageTemplate(id="Cover",   frames=[cover_frame],
+                     onPage=_cover_background),
+        PageTemplate(id="Content", frames=[content_frame],
+                     onPage=_page_footer),
+    ])
 
-    pdf_bytes = HTML(string=html_content).write_pdf()
-    return pdf_bytes
+    story = []
+
+    # ── Cover page ────────────────────────────────────────────────────────────
+    company  = brief.get("company", "Company")
+    industry = brief.get("industry", "")
+    date     = datetime.utcnow().strftime("%B %d, %Y")
+
+    story.append(Spacer(1, 5 * cm))
+    story.append(Paragraph("CONFIDENTIAL — STRATEGY BRIEF", styles["CoverLabel"]))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(Paragraph(company, styles["CoverTitle"]))
+    story.append(Paragraph("Analysed Summary Report", styles["CoverSub"]))
+    story.append(Spacer(1, 1 * cm))
+    story.append(Paragraph(f"<b>Industry:</b> {industry}", styles["CoverMeta"]))
+    story.append(Paragraph(f"<b>Generated:</b> {date}", styles["CoverMeta"]))
+    story.append(Spacer(1, 0.4 * cm))
+    story.append(Paragraph(
+        "Prepared by AI Market Research Tool — For Consultant Use Only",
+        styles["CoverMeta"]))
+
+    story.append(PageBreak())
+
+    # ── Executive Summary (light-blue background via coloured paragraph) ──────
+    story.append(Paragraph("Executive Summary", styles["SectionHead"]))
+    story.append(HRFlowable(width="100%", thickness=2, color=RED, spaceAfter=10))
+    exec_text = brief.get("executive_summary", "")
+    story.extend(_render_text(exec_text, styles))
+    story.append(Spacer(1, 0.5 * cm))
+
+    # ── Detailed sections ────────────────────────────────────────────────────
+    for section in brief.get("sections", []):
+        block = []
+        block.append(Paragraph(section["title"], styles["SectionHead"]))
+        block.append(HRFlowable(width="100%", thickness=1.5, color=RED, spaceAfter=8))
+        if section.get("sources"):
+            block.append(Paragraph(
+                f"Source: {', '.join(section['sources'])}", styles["Tag"]))
+        block.extend(_render_text(section.get("content", ""), styles))
+        block.append(Spacer(1, 0.4 * cm))
+        story.append(KeepTogether(block[:4]))   # keep heading + first para together
+        story.extend(block[4:])
+
+    # ── Strategic Recommendations ─────────────────────────────────────────────
+    story.append(Paragraph("Strategic Recommendations", styles["SectionHead"]))
+    story.append(HRFlowable(width="100%", thickness=2, color=RED, spaceAfter=10))
+    story.extend(_render_text(brief.get("strategic_recommendations", ""), styles))
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 0.5 * cm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=GREY))
+    story.append(Paragraph(
+        f"Confidential — {company} Strategy Brief — Generated {date}",
+        styles["Footer"]))
+
+    doc.build(story)
+    return buf.getvalue()

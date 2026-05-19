@@ -8,22 +8,22 @@ from datetime import datetime
 from typing import Dict
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     BaseDocTemplate, Frame, PageTemplate, Paragraph,
-    Spacer, HRFlowable, PageBreak, KeepTogether,
+    Spacer, HRFlowable, PageBreak, KeepTogether, Table, TableStyle,
 )
 
 # ── Brand colours ─────────────────────────────────────────────────────────────
-NAVY   = colors.HexColor("#0f3460")
-RED    = colors.HexColor("#e94560")
-LIGHT  = colors.HexColor("#f0f4ff")
-GREY   = colors.HexColor("#6b7280")
-WHITE  = colors.white
-BLACK  = colors.HexColor("#1a1a2e")
+NAVY    = colors.HexColor("#0f3460")
+RED     = colors.HexColor("#e94560")
+SLATE   = colors.HexColor("#1e293b")
+GREY    = colors.HexColor("#6b7280")
+LGREY   = colors.HexColor("#f1f5f9")
+WHITE   = colors.white
 
 
 def _styles():
@@ -32,106 +32,118 @@ def _styles():
     def add(name, **kw):
         base.add(ParagraphStyle(name=name, **kw))
 
-    add("CoverTitle",   fontSize=28, textColor=WHITE,  fontName="Helvetica-Bold",
-        spaceAfter=8,  leading=34)
-    add("CoverSub",     fontSize=13, textColor=colors.HexColor("#a8dadc"),
-        fontName="Helvetica", spaceAfter=30, leading=18)
-    add("CoverMeta",    fontSize=9,  textColor=colors.HexColor("#cccccc"),
-        fontName="Helvetica", spaceAfter=4,  leading=13)
-    add("CoverLabel",   fontSize=8,  textColor=colors.HexColor("#a8dadc"),
-        fontName="Helvetica-Bold", spaceAfter=2, leading=11,
-        wordWrap="CJK")
+    # Cover
+    add("CoverLabel",  fontSize=9,  textColor=colors.HexColor("#94a3b8"),
+        fontName="Helvetica-Bold", spaceAfter=6, leading=12,
+        letterSpacing=2)
+    add("CoverTitle",  fontSize=34, textColor=WHITE, fontName="Helvetica-Bold",
+        spaceAfter=10, leading=40)
+    add("CoverSub",    fontSize=14, textColor=colors.HexColor("#cbd5e1"),
+        fontName="Helvetica", spaceAfter=28, leading=20)
+    add("CoverMeta",   fontSize=10, textColor=colors.HexColor("#94a3b8"),
+        fontName="Helvetica", spaceAfter=5, leading=15)
 
-    add("SectionHead",  fontSize=14, textColor=NAVY, fontName="Helvetica-Bold",
-        spaceBefore=6, spaceAfter=8, leading=18)
-    add("ExecHead",     fontSize=14, textColor=WHITE, fontName="Helvetica-Bold",
-        spaceBefore=4, spaceAfter=8, leading=18)
-    add("SubHead",      fontSize=11, textColor=BLACK, fontName="Helvetica-Bold",
-        spaceBefore=8, spaceAfter=4, leading=14)
-    add("Body",         fontSize=10, textColor=BLACK, fontName="Helvetica",
-        spaceAfter=6,  leading=15, alignment=TA_JUSTIFY)
-    add("ExecBody",     fontSize=10, textColor=colors.HexColor("#e5e7eb"),
-        fontName="Helvetica", spaceAfter=6, leading=15, alignment=TA_JUSTIFY)
-    add("BulletItem",   fontSize=10, textColor=BLACK, fontName="Helvetica",
-        spaceAfter=6,  leading=15, leftIndent=16, bulletIndent=4)
-    add("Tag",          fontSize=8,  textColor=NAVY,  fontName="Helvetica",
-        spaceAfter=6,  leading=10,
-        backColor=colors.HexColor("#e8f4f8"),
-        borderPadding=(2, 6, 2, 6), borderRadius=8)
-    add("Footer",       fontSize=7,  textColor=GREY,  fontName="Helvetica",
+    # Section headings
+    add("SectionHead", fontSize=16, textColor=NAVY, fontName="Helvetica-Bold",
+        spaceBefore=4, spaceAfter=6, leading=22)
+    add("SubHead",     fontSize=12, textColor=SLATE, fontName="Helvetica-Bold",
+        spaceBefore=10, spaceAfter=4, leading=16)
+
+    # Body text — left-aligned, comfortable size
+    add("Body",        fontSize=11, textColor=SLATE, fontName="Helvetica",
+        spaceAfter=8, leading=18, alignment=TA_LEFT)
+    add("ExecBody",    fontSize=11, textColor=colors.HexColor("#e2e8f0"),
+        fontName="Helvetica", spaceAfter=8, leading=18, alignment=TA_LEFT)
+
+    # Lists
+    add("Numbered",    fontSize=11, textColor=SLATE, fontName="Helvetica",
+        spaceAfter=8, leading=18, leftIndent=20, firstLineIndent=0)
+    add("BulletItem",  fontSize=11, textColor=SLATE, fontName="Helvetica",
+        spaceAfter=6, leading=18, leftIndent=20)
+
+    # Source tag — rendered as small label above section
+    add("SourceTag",   fontSize=8,  textColor=colors.HexColor("#2563eb"),
+        fontName="Helvetica-Bold", spaceAfter=8, leading=11,
+        backColor=colors.HexColor("#dbeafe"),
+        borderPadding=(3, 8, 3, 8))
+
+    add("Footer",      fontSize=8,  textColor=GREY, fontName="Helvetica",
         alignment=TA_CENTER, leading=10)
 
     return base
 
 
 def _cover_background(canvas, doc):
-    """Draw the dark-navy cover page background."""
     canvas.saveState()
     w, h = A4
+    # Dark gradient-like navy cover
     canvas.setFillColor(NAVY)
     canvas.rect(0, 0, w, h, fill=1, stroke=0)
+    # Subtle red accent stripe at bottom
+    canvas.setFillColor(RED)
+    canvas.rect(0, 0, w, 0.6 * cm, fill=1, stroke=0)
     canvas.restoreState()
 
 
 def _page_footer(canvas, doc):
-    """Draw page number footer on non-cover pages."""
     canvas.saveState()
     w, _ = A4
-    canvas.setFont("Helvetica", 7)
+    canvas.setFillColor(colors.HexColor("#e2e8f0"))
+    canvas.rect(0, 1 * cm, w, 0.05 * cm, fill=1, stroke=0)
+    canvas.setFont("Helvetica", 8)
     canvas.setFillColor(GREY)
-    canvas.drawCentredString(w / 2, 1.2 * cm,
-                             f"Confidential — Page {doc.page}")
+    canvas.drawCentredString(w / 2, 0.5 * cm,
+                             f"Confidential  ·  Page {doc.page}")
     canvas.restoreState()
 
 
-def _render_text(text: str, styles, body_style="Body", exec_mode=False) -> list:
+def _render_text(text: str, styles, exec_mode=False) -> list:
     """Convert plain/markdown text into ReportLab flowables."""
     flowables = []
-    body_st  = styles[body_style]
-    sub_st   = styles["SubHead"]
-    bullet_st = styles["BulletItem"]
+    body_st   = styles["ExecBody"] if exec_mode else styles["Body"]
+    sub_st    = styles["SubHead"]
+    num_st    = styles["Numbered"]
+    bul_st    = styles["BulletItem"]
 
     lines = [ln for ln in text.split("\n") if ln.strip()]
     for line in lines:
         stripped = line.strip()
 
-        # Bold heading: **text** or ## heading
-        if re.match(r"^\*\*.+\*\*$", stripped) or re.match(r"^#{1,3}\s", stripped):
+        # Bold heading: ## heading or standalone **text**
+        if re.match(r"^#{1,3}\s", stripped):
             clean = re.sub(r"^#+\s*", "", stripped).replace("**", "")
             flowables.append(Paragraph(clean, sub_st))
 
-        # Numbered list
+        # Numbered list item
         elif re.match(r"^\d+\.\s", stripped):
-            clean = re.sub(r"^\d+\.\s*", "", stripped)
-            # Bold the first part if **...**
-            clean = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", clean)
-            num   = re.match(r"^(\d+)", stripped).group(1)
-            flowables.append(Paragraph(
-                f"<b>{num}.</b> {clean}", bullet_st))
+            body = re.sub(r"^\d+\.\s*", "", stripped)
+            body = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", body)
+            num  = re.match(r"^(\d+)", stripped).group(1)
+            flowables.append(
+                Paragraph(f"<b>{num}.</b>  {body}", num_st))
 
         # Bullet
-        elif stripped.startswith("- ") or stripped.startswith("• "):
-            clean = stripped.lstrip("-•").strip()
-            clean = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", clean)
-            flowables.append(Paragraph(f"• {clean}", bullet_st))
+        elif stripped.startswith(("- ", "• ", "* ")):
+            body = re.sub(r"^[-•*]\s+", "", stripped)
+            body = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", body)
+            flowables.append(Paragraph(f"•  {body}", bul_st))
 
         else:
             clean = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", stripped)
+            clean = re.sub(r"^#+\s*", "", clean)
             flowables.append(Paragraph(clean, body_st))
 
     return flowables
 
 
 def generate_pdf(brief: Dict) -> bytes:
-    """Render the brief dict to a PDF and return bytes."""
     buf    = io.BytesIO()
     styles = _styles()
     w, h   = A4
 
-    # ── Document with two page templates ─────────────────────────────────────
-    margin = 2 * cm
-    cover_frame  = Frame(margin, margin, w - 2*margin, h - 2*margin,
-                         id="cover",  showBoundary=0)
+    margin = 2.2 * cm
+    cover_frame   = Frame(margin, 1.5*cm, w - 2*margin, h - 2*margin,
+                          id="cover", showBoundary=0)
     content_frame = Frame(margin, 1.8*cm, w - 2*margin, h - margin - 1.8*cm,
                           id="content", showBoundary=0)
 
@@ -148,57 +160,60 @@ def generate_pdf(brief: Dict) -> bytes:
     ])
 
     story = []
-
-    # ── Cover page ────────────────────────────────────────────────────────────
     company  = brief.get("company", "Company")
     industry = brief.get("industry", "")
     date     = datetime.utcnow().strftime("%B %d, %Y")
 
-    story.append(Spacer(1, 5 * cm))
-    story.append(Paragraph("CONFIDENTIAL — STRATEGY BRIEF", styles["CoverLabel"]))
-    story.append(Spacer(1, 0.3 * cm))
+    # ── Cover ────────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 6 * cm))
+    story.append(Paragraph("STRATEGY BRIEF  ·  CONFIDENTIAL", styles["CoverLabel"]))
+    story.append(Spacer(1, 0.4 * cm))
     story.append(Paragraph(company, styles["CoverTitle"]))
     story.append(Paragraph("Analysed Summary Report", styles["CoverSub"]))
+    story.append(HRFlowable(width="100%", thickness=1,
+                             color=colors.HexColor("#334155"), spaceAfter=20))
+    story.append(Paragraph(f"<b>Industry:</b>   {industry}", styles["CoverMeta"]))
+    story.append(Paragraph(f"<b>Generated:</b>  {date}",    styles["CoverMeta"]))
     story.append(Spacer(1, 1 * cm))
-    story.append(Paragraph(f"<b>Industry:</b> {industry}", styles["CoverMeta"]))
-    story.append(Paragraph(f"<b>Generated:</b> {date}", styles["CoverMeta"]))
-    story.append(Spacer(1, 0.4 * cm))
     story.append(Paragraph(
         "Prepared by AI Market Research Tool — For Consultant Use Only",
         styles["CoverMeta"]))
-
     story.append(PageBreak())
 
-    # ── Executive Summary (light-blue background via coloured paragraph) ──────
+    # ── Executive Summary ────────────────────────────────────────────────────
     story.append(Paragraph("Executive Summary", styles["SectionHead"]))
-    story.append(HRFlowable(width="100%", thickness=2, color=RED, spaceAfter=10))
-    exec_text = brief.get("executive_summary", "")
-    story.extend(_render_text(exec_text, styles))
-    story.append(Spacer(1, 0.5 * cm))
+    story.append(HRFlowable(width="100%", thickness=2.5, color=RED, spaceAfter=14))
+    story.extend(_render_text(brief.get("executive_summary", ""), styles))
+    story.append(Spacer(1, 0.8 * cm))
 
     # ── Detailed sections ────────────────────────────────────────────────────
     for section in brief.get("sections", []):
         block = []
         block.append(Paragraph(section["title"], styles["SectionHead"]))
-        block.append(HRFlowable(width="100%", thickness=1.5, color=RED, spaceAfter=8))
+        block.append(HRFlowable(width="100%", thickness=1.5,
+                                 color=RED, spaceAfter=10))
         if section.get("sources"):
             block.append(Paragraph(
-                f"Source: {', '.join(section['sources'])}", styles["Tag"]))
+                f"SOURCE:  {',  '.join(section['sources']).upper()}",
+                styles["SourceTag"]))
         block.extend(_render_text(section.get("content", ""), styles))
-        block.append(Spacer(1, 0.4 * cm))
-        story.append(KeepTogether(block[:4]))   # keep heading + first para together
-        story.extend(block[4:])
+        block.append(Spacer(1, 0.6 * cm))
+        # Keep heading + rule + first paragraph together
+        story.append(KeepTogether(block[:3]))
+        story.extend(block[3:])
 
     # ── Strategic Recommendations ─────────────────────────────────────────────
     story.append(Paragraph("Strategic Recommendations", styles["SectionHead"]))
-    story.append(HRFlowable(width="100%", thickness=2, color=RED, spaceAfter=10))
+    story.append(HRFlowable(width="100%", thickness=2.5, color=RED, spaceAfter=14))
     story.extend(_render_text(brief.get("strategic_recommendations", ""), styles))
 
-    # ── Footer ────────────────────────────────────────────────────────────────
-    story.append(Spacer(1, 0.5 * cm))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=GREY))
+    # ── Document footer ───────────────────────────────────────────────────────
+    story.append(Spacer(1, 0.6 * cm))
+    story.append(HRFlowable(width="100%", thickness=0.5,
+                             color=colors.HexColor("#e2e8f0")))
+    story.append(Spacer(1, 0.2 * cm))
     story.append(Paragraph(
-        f"Confidential — {company} Strategy Brief — Generated {date}",
+        f"Confidential  ·  {company} Strategy Brief  ·  Generated {date}",
         styles["Footer"]))
 
     doc.build(story)

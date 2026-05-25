@@ -1,39 +1,51 @@
 """
 Vector store interface using Gemini embeddings + local JSON storage.
-Drop-in replacement for the previous ChromaDB-based implementation.
-No compiled dependencies — works on any platform including Render.
+Embeddings use the Gemini REST API (gemini-embedding-001) — avoids SDK model
+name issues with google-generativeai 0.8.x on v1beta.
 """
 import os
 from typing import List
 
+import httpx
+
 from gcloud.vector_store import add_documents, count, query as _query
+
+EMBED_MODEL = "gemini-embedding-001"
+EMBED_URL = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/"
+    f"{EMBED_MODEL}:embedContent"
+)
+
+
+def _embed_single(text: str, task_type: str) -> List[float]:
+    """Call Gemini embedContent REST API for one text."""
+    api_key = os.environ["GEMINI_API_KEY"]
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            EMBED_URL,
+            params={"key": api_key},
+            json={
+                "content": {"parts": [{"text": text}]},
+                "taskType": task_type,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    embedding = data.get("embedding") or {}
+    values = embedding.get("values")
+    if not values:
+        raise ValueError(f"Unexpected embed response: {data}")
+    return values
 
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
-    """Embed a list of texts using Gemini embedding-001."""
-    import google.generativeai as genai
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    embeddings = []
-    for text in texts:
-        result = genai.embed_content(
-            model="models/embedding-001",
-            content=text,
-            task_type="retrieval_document",
-        )
-        embeddings.append(result["embedding"])
-    return embeddings
+    """Embed a list of texts using Gemini gemini-embedding-001."""
+    return [_embed_single(text, "RETRIEVAL_DOCUMENT") for text in texts]
 
 
 def embed_query(text: str) -> List[float]:
-    """Embed a single query string using Gemini embedding-001."""
-    import google.generativeai as genai
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    result = genai.embed_content(
-        model="models/embedding-001",
-        content=text,
-        task_type="retrieval_query",
-    )
-    return result["embedding"]
+    """Embed a single query string using Gemini gemini-embedding-001."""
+    return _embed_single(text, "RETRIEVAL_QUERY")
 
 
 class _Collection:

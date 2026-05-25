@@ -10,7 +10,7 @@ from gcloud.vector_store import add_documents, count, query as _query
 
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
-    """Embed a list of texts using Gemini text-embedding-004."""
+    """Embed a list of texts using Gemini embedding-001."""
     import google.generativeai as genai
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     embeddings = []
@@ -25,14 +25,14 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 
 
 def embed_query(text: str) -> List[float]:
-    """Embed a single query string using Gemini text-embedding-004."""
+    """Embed a single query string using Gemini embedding-001."""
     import google.generativeai as genai
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-        result = genai.embed_content(
-            model="models/embedding-001",
-            content=text,
-            task_type="retrieval_query",
-        )
+    result = genai.embed_content(
+        model="models/embedding-001",
+        content=text,
+        task_type="retrieval_query",
+    )
     return result["embedding"]
 
 

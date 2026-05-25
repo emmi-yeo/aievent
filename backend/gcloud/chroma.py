@@ -16,7 +16,7 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
     embeddings = []
     for text in texts:
         result = genai.embed_content(
-            model="models/text-embedding-004",
+            model="models/embedding-001",
             content=text,
             task_type="retrieval_document",
         )
@@ -28,11 +28,11 @@ def embed_query(text: str) -> List[float]:
     """Embed a single query string using Gemini text-embedding-004."""
     import google.generativeai as genai
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    result = genai.embed_content(
-        model="models/text-embedding-004",
-        content=text,
-        task_type="retrieval_query",
-    )
+        result = genai.embed_content(
+            model="models/embedding-001",
+            content=text,
+            task_type="retrieval_query",
+        )
     return result["embedding"]
 
 
